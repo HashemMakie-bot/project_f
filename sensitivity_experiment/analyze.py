@@ -30,6 +30,18 @@ def bootstrap_fixed(frame,threshold,repeats=2000,seed=42):
     return {'valid':len(values),'requested':repeats,'sensitivity_95_percentile':np.quantile(a[:,0],[.025,.975]).tolist(),
             'specificity_95_percentile':np.quantile(a[:,1],[.025,.975]).tolist()}
 
+def leave_one_patient_out(frame,target):
+    """Select threshold without the held-out patient's labels and score that patient."""
+    predictions=[]; thresholds=[]
+    for patient, heldout in frame.groupby('patient_id'):
+        remaining=frame[frame.patient_id!=patient]
+        threshold,_=select(remaining,target); thresholds.append(threshold)
+        for row in heldout.itertuples(): predictions.append((int(row.label),int(row.score>=threshold)))
+    tp=sum(y==1 and p==1 for y,p in predictions); fn=sum(y==1 and p==0 for y,p in predictions)
+    tn=sum(y==0 and p==0 for y,p in predictions); fp=sum(y==0 and p==1 for y,p in predictions)
+    return {'patients':len(thresholds),'tp':tp,'fn':fn,'tn':tn,'fp':fp,'sensitivity':tp/(tp+fn),
+            'specificity':tn/(tn+fp),'minimum_threshold':min(thresholds),'maximum_threshold':max(thresholds)}
+
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('validation_csv'); ap.add_argument('--out',required=True); ap.add_argument('--target',type=float,default=.95)
     args=ap.parse_args(); path=Path(args.validation_csv); frame=pd.read_csv(path)
@@ -39,7 +51,7 @@ def main():
     output={'data_role':'validation only; test not read','selection':'maximum specificity at target sensitivity',
             'target_sensitivity':args.target,'threshold':threshold,'validation':m,'patients':int(frame.patient_id.nunique()),
             'nodules':len(frame),'validation_csv_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
-            'bootstrap_conditional_on_selected_threshold':fixed,
+            'bootstrap_conditional_on_selected_threshold':fixed,'leave_one_patient_out':leave_one_patient_out(frame,args.target),
             'limitations':'Selected and assessed on the same validation data; intervals are conditional and optimistic; external evaluation is required. Scores are not calibrated cancer probabilities.'}
     Path(args.out).write_text(json.dumps(output,indent=2),encoding='utf-8'); print(json.dumps(output,indent=2))
 
